@@ -1,0 +1,493 @@
+---
+title: 'Final Project: Deep Learning and Spark with H2O'
+author: "Deepa Maret"
+date: "12/3/2017"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### References
+1. **[https://www.r-bloggers.com/building-deep-neural-nets-with-h2o-and-rsparkling-that-predict-arrhythmia-of-the-heart/]**
+2. **[https://github.com/h2oai/h2o-tutorials/tree/master/tutorials/deeplearning]**
+3.**[https://shiring.github.io/machine_learning/2017/02/27/h2o]**
+4.**[https://spark.rstudio.com/guides/h2o/]**
+
+
+## Dataset
+
+### Title : adult from UCI Machine Learning Repository [https://archive.ics.uci.edu/ml/machine-learning-databases/adult/]
+
+### Number of Instances
+   48842 instances, mix of continuous and discrete    (train=32561, test=16281)
+
+### Number of Attributes 
+6 continuous, 8 nominal attributes.
+
+### Attribute infortmation
+age: continuous   
+workclass: Private, Self-emp-not-inc, Self-emp-inc, Federal-gov, Local-gov, State-gov, Without-pay, Never-worked  
+fnlwgt: continuous   
+education: Bachelors, Some-college, 11th, HS-grad, Prof-school, Assoc-acdm, Assoc-voc, 9th, 7th-8th, 12th, Masters, 1st-4th, 10th, Doctorate, 5th-6th, Preschool   
+education-num: continuous  
+marital-status: Married-civ-spouse, Divorced, Never-married, Separated, Widowed, Married-spouse-absent, Married-AF-spouse  
+occupation: Tech-support, Craft-repair, Other-service, Sales, Exec-managerial, Prof-specialty, Handlers-cleaners, Machine-op-inspct, Adm-clerical, Farming-fishing, Transport-moving, Priv-house-serv, Protective-serv, Armed-Forces  
+relationship: Wife, Own-child, Husband, Not-in-family, Other-relative, Unmarried  
+race: White, Asian-Pac-Islander, Amer-Indian-Eskimo, Other, Black  
+sex: Female, Male  
+capital-gain: continuous  
+capital-loss: continuous  
+hours-per-week: continuous   
+native-country: United-States, Cambodia, England, Puerto-Rico, Canada, Germany, Outlying-US(Guam-USVI-etc), India, Japan, Greece, South, China, Cuba, Iran, Honduras, Philippines, Italy, Poland, Jamaica, Vietnam, Mexico, Portugal, Ireland, France, Dominican-Republic, Laos, Ecuador, Taiwan, Haiti, Columbia, Hungary, Guatemala, Nicaragua, Scotland, Thailand, Yugoslavia, El-Salvador, Trinadad&Tobago, Peru, Hong, Holand-Netherlands  
+
+### Dependent variable / Target variable / Outcome
+income: >50K, <=50K.
+
+## Creating data
+I downloaded the adult.data and adult.test into my home directory. Original data has been split up into training and test subsets, but there doesn't seem to be anything particular about that split, so I will combine those two datasets together and split them into training and test as necessary.
+
+### Loading adult.data and naming columns. adult.data contains 32,561 observations and 15 variables.
+```{r adult}
+adult_data <- read.table("/Users/deepamaret/adult.data",sep=",",header=FALSE,quote="")
+colnames(adult_data) <- c("age","work_class","fnlwgt","education","education_num","marital_status","occupation","relationship","race","sex","capital_gain","capital_loss","hours_per_week","native_country","income")
+```
+
+### view the structure of adult_data
+```{r structure adult.data}
+str(adult_data)
+```
+
+### Loading adult.test and naming columns. adult.test contains 16,281 observations and 15 variables.
+```{r}
+adult_test <-read.table("/Users/deepamaret/adult.test",sep=",",header=FALSE,quote="",skip=1)
+colnames(adult_test) <- c("age","work_class","fnlwgt","education","education_num","marital_status","occupation","relationship","race","sex","capital_gain","capital_loss","hours_per_week","native_country","income")
+```
+
+### view the structure of adult_test
+```{r structure adult.test}
+str(adult_test)
+```
+
+### Combining adult_data and adult_test to adultDat
+```{r adultDat }
+adultDat <- rbind(adult_data,adult_test)
+```
+
+### view the structure of adultDat. There are 48,842 obseravations and 15 variables.
+```{r}
+str(adultDat)
+```
+
+### summary of adultDat
+```{r}
+summary(adultDat)
+```
+
+## Cleaning up data: adultDat
+
+1. **Removing variable "final weight". Now, adultDat contains 48,842 observations and 14 variables.**
+Attribute called "final weight" in the dataset description represents demographic weighting of these observations. Removing 'fnlwgt' for the purposes of this assignment as I am not interested in using it for learning the model.
+
+```{r removing "fnlwgt" from adultDat}
+adultDat <- subset(adultDat,select=-fnlwgt)
+dim(adultDat)
+```
+
+2. **Removing education variable since I will use only education.num instead of education. Now, adultDat contains 48,842 observations and 13 variables.**
+```{r, removing education variable}
+adultDat <- subset(adultDat,select=-education)
+dim(adultDat)
+```
+
+3. **Reordering columns; continuous variables followed by categorical variables**
+```{r, reordering columns}
+order(colnames(adultDat))
+adultDat <- adultDat[, c(1,3,11,9,10,4,12,5,7,6,8,2,13)]
+colnames(adultDat)
+```
+
+4. **Cleaning up income variable (Dependent variable). Reducing levels from 4 (<=50K, >50K, <=50K. and >50K.) to 2 (<=50K and >50K)**
+```{r, income}
+adultDat$income[adultDat$income == " >50K." ] <- " >50K" #assigning adultDat$income == " >50K." to " >50K"
+adultDat$income[adultDat$income == " <=50K."] <- " <=50K" #assigning adultDat$income == " >50K." to " >50K"
+adultDat$income <- factor(adultDat$income) # levels are not removed.so run factor()
+levels(adultDat$income)
+```
+
+5. **Cleaning up marital_status. reduced levels to 2 (Married and Single)**
+```{r, marital_status}
+# Adding levels Married and Single  and thus reducing 7 levels to 2 levels.
+levels(adultDat$marital_status) <- c(levels(adultDat$marital_status)," Married"," Single") #creating new two levels " Married" and " Single"
+adultDat$marital_status[adultDat$marital_status == " Divorced"] <- " Single" #assigning adultDat$marital_status == " Divorced" to " Single"
+adultDat$marital_status[adultDat$marital_status == " Never-married"] <- " Single" #assigning adultDat$marital_status == " Never-married" to " Single"
+adultDat$marital_status[adultDat$marital_status == " Separated"] <- " Single" #assigning adultDat$marital_status == " Separated" to " Single
+adultDat$marital_status[adultDat$marital_status == " Widowed"] <- " Single" #assigning adultDat$marital_status == " Widowed" to " Single
+adultDat$marital_status[adultDat$marital_status == " Married-AF-spouse"] <- " Married" #assigning adultDat$marital_status == " Married-AF-spouse" to " Married"
+adultDat$marital_status[adultDat$marital_status == " Married-civ-spouse"] <- " Married" #assigning adultDat$marital_status == " Married-civ-spouse" to " Married"
+adultDat$marital_status[adultDat$marital_status == " Married-spouse-absent"] <- " Married" #assigning adultDat$marital_status == " Married-spouse-absent" to " Married"
+adultDat$marital_status <- factor(adultDat$marital_status)
+levels(adultDat$marital_status)
+```
+
+6. **Native_country variable. Reduced levels to 2 (US and Non-US)**
+```{r}
+#remove all rows (857) with adultDat$native_country== " ?". Now adultDat will have only 48,842-857= 47,985 observations
+adultDat <- adultDat[adultDat$native_country != " ?",] 
+# Adding levels US and Non-US  and thus reducing 42 levels to 2 levels.
+levels(adultDat$native_country) <- c(levels(adultDat$native_country)," US"," Non-US") #creating new two levels " US" and " Non-US"
+adultDat$native_country[adultDat$native_country != " United-States"] <- " Non-US" #assigning adultDat$marital_status != " United-States" to " Non-US"
+adultDat$native_country[adultDat$native_country == " United-States"] <- " US" #assigning adultDat$marital_status == " United-States" to " US"
+adultDat$native_country <- factor(adultDat$native_country)
+levels(adultDat$native_country)
+```
+
+7. **Cleaning up occupation variable. reduced levels to 13. Removed rows with " ?" and " Armed-Forces"**
+```{r}
+#remove all rows (2,763) with adultDat$occupation== " ?". Now adultDat will have only 47,985-2,763= 45,222 observations
+adultDat <- adultDat[adultDat$occupation != " ?",] 
+# excluding " Armed-Forces" on the basis that there is not enough data to adequately capture the impact. removed all rows (14 rows) with adultDat$occupation== " Armed-Forces". Now adultDat will have only 45,222-14= $45,208 observations
+adultDat <- adultDat[adultDat$occupation != " Armed-Forces",] 
+adultDat$occupation <- factor(adultDat$occupation)
+# Now adultDat$occupation has only 13 levels
+levels(adultDat$occupation)
+```
+
+8. **Cleaning up race variable. Reduced to 2 levels (White and Non-White)**
+```{r}
+# Adding another levels Non-White and thus reducing 5 levels to 2 levels.
+levels(adultDat$race) <- c(levels(adultDat$race)," Non-White") #creating another level " Non-White"
+adultDat$race[adultDat$race != " White"] <- " Non-White" #assigning adultDat$race != " White" to " Non-White"
+adultDat$race <- factor(adultDat$race)
+# Now adultDat$race has only 2 levels
+levels(adultDat$race)
+```
+
+9. **Cleaning up work_class variable. reduced levels to 3 (Private, gov, and Self-emp). Removed levels " Without-pay" and " Never-worked"**
+```{r}
+#remove all rows (21 rows) with adultDat$work_class== " Without-pay"
+adultDat <- adultDat[adultDat$work_class != " Without-pay",] 
+#creating new levels " gov" and " Self-emp"
+levels(adultDat$work_class) <- c(levels(adultDat$work_class)," gov"," Self-emp") 
+#assigning adultDat$work_class == " Federal-gov" to" gov"
+adultDat$work_class[adultDat$work_class == " Federal-gov"] <- " gov" 
+#assigning adultDat$work_class == " State-gov" to" gov"
+adultDat$work_class[adultDat$work_class == " State-gov" ] <- " gov" 
+#assigning adultDat$work_class == " Local-gov" to" gov"
+adultDat$work_class[adultDat$work_class == " Local-gov"] <- " gov" 
+#assigning adultDat$work_class == " Self-emp-inc" to " Self-emp"
+adultDat$work_class[adultDat$work_class == " Self-emp-inc"] <- " Self-emp" 
+#assigning adultDat$work_class == "Self-emp-not-inc" to " Self-emp"
+adultDat$work_class[adultDat$work_class == " Self-emp-not-inc" ] <- " Self-emp" 
+adultDat$work_class <- factor(adultDat$work_class)
+# new data should have 48,208-21= 45,187 rows.
+dim(adultDat)
+levels(adultDat$work_class)
+```
+
+## adultDat after clean up
+```{r}
+dim(adultDat)
+str(adultDat)
+```
+
+### Plotting quantitative variables against income
+## Based on the graphical distributon of quantitative variables aginst the target variable (income), it is evident that on average, there is a significant difference in income based on education_num and hours_per_week.
+```{r,fig.width=8,fig.height=8}
+# Plotting quantitative variables against income
+old.par <- par(mfrow =c(2,3),ps=16)
+plot(adultDat$income,adultDat$age,col=as.numeric(adultDat$income)+1,xlab="income",ylab="age")
+plot(adultDat$income,adultDat$education_num,col=as.numeric(adultDat$income)+2,xlab="income",ylab="education_in_years")
+plot(adultDat$income,adultDat$hours_per_week,col=as.numeric(adultDat$income)+3,xlab="income",ylab="hours_per_week")
+plot(adultDat$income,adultDat$capital_gain,col=as.numeric(adultDat$income)+4,xlab="income",ylab="capital_gain")
+plot(adultDat$income,adultDat$capital_loss,col=as.numeric(adultDat$income)+5,xlab="income",ylab="capital_loss")
+par(old.par)
+```
+
+### Plotting of Categorical Variables
+### With binary classification, we see that people making >50K are considerably higher in number than those making <50K per year. Almost same numbar of married and single people. people with US as native_contry, male and whites make the majority of the population.
+```{r custom plotting theme}
+library(ggplot2)
+library(ggrepel)
+library(gridExtra)
+
+#Reference:https://shiring.github.io/machine_learning/2017/02/27/h2o
+my_theme <- function(base_size = 12, base_family = "sans"){
+  theme_minimal(base_size = base_size, base_family = base_family) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    panel.grid.major = element_line(color = "grey"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "aliceblue"),
+    strip.background = element_rect(fill = "darkgrey", color = "grey", size = 1),
+    strip.text = element_text(face = "bold", size = 12, color = "white"),
+    legend.position = "right",
+    legend.justification = "top", 
+    panel.border = element_rect(color = "grey", fill = NA, size = 0.5)
+  )
+}
+```
+
+```{r income}
+p1 <- ggplot(adultDat, aes(x = income)) +
+  geom_bar(fill = "navy", alpha = 0.7) +
+  my_theme()
+```
+
+```{r marital_status}
+p2 <- ggplot(adultDat, aes(x = marital_status)) +
+  geom_bar(fill = "navy", alpha = 0.7) +
+  my_theme()
+```
+
+```{r native_country}
+p3 <- ggplot(adultDat, aes(x = native_country)) +
+  geom_bar(fill = "navy", alpha = 0.7) +
+  my_theme()
+```
+
+```{r occupation}
+p4 <- ggplot(adultDat, aes(x = occupation)) +
+  geom_bar(fill = "navy", alpha = 0.7) +
+  my_theme()
+```
+
+```{r race}
+p5 <- ggplot(adultDat, aes(x = race)) +
+  geom_bar(fill = "navy", alpha = 0.7) +
+  my_theme()
+```
+
+```{r relationship}
+p6 <- ggplot(adultDat, aes(x = relationship)) +
+  geom_bar(fill = "navy", alpha = 0.7) +
+  my_theme()
+```
+
+```{r sex}
+p7 <- ggplot(adultDat, aes(x = sex)) +
+  geom_bar(fill = "navy", alpha = 0.7) +
+  my_theme()
+```
+
+```{r work_class}
+p8 <- ggplot(adultDat, aes(x = work_class)) +
+  geom_bar(fill = "navy", alpha = 0.7) +
+  my_theme()
+```
+
+```{r income, marital status, native_country}
+grid.arrange(p1,p2,p3,ncol = 3)
+```
+
+```{r occupation}
+grid.arrange(p4, ncol =1)
+```
+
+```{r race, relationship}
+grid.arrange(p5,p6, ncol = 2)
+```
+
+```{r sex and work_class}
+grid.arrange(p7,p8, ncol = 2)
+```
+
+
+# Deep Lerarning and Spark with H2o
+## Installation: Reference 
+1. **[http://h2o-release.s3.amazonaws.com/sparkling-water/rel-2.2/4/index.html]**
+2. **[https://spark.rstudio.com/guides/h2o/]**
+## Deep leaning: References 
+1. **[http://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/deep-learning.html]**
+2. **[https://htmlpreview.github.io/?https://github.com/ledell/sldm4-h2o/blob/master/sldm4-deeplearning-h2o.html]**
+
+```{r loading packages, warning= FALSE}
+options(rsparkling.sparklingwater.version = "2.2.4")
+library(rsparkling)
+library(sparklyr)
+library(h2o)
+library(dplyr)
+h2o.init()
+```
+
+##  Initializing a local Spark connection, and copy adultDat dataset into Spark.
+### We can see that spark data frames are created.
+```{r Spark Connection, warning=FALSE}
+sc <- spark_connect("local", version = "2.2.0")
+adultDat_tbl <- copy_to(sc, adultDat, "adultDat",overwrite=TRUE)
+class(adultDat_tbl)
+```
+
+
+## Converting Spark Data Frames to h2o Frames. Then h2o R interface can be used to train H2O machine learning/ deep learning algorithms on the data.
+```{r h2o frames}
+adultDat_hf <- as_h2o_frame(sc, adultDat_tbl, strict_version_check = FALSE)
+class(adultDat_hf)
+```
+
+## View adultDat_hf
+```{r view adultDat_hf}
+adultDat_hf
+```
+
+## Converting categorical variables as factors.
+### Since the response is encoded as integers, we need to tell H2O that the response is in fact a categorical/factor column. Otherwise, it will train a regression model instead of multiclass classification.
+```{r converting to factors}
+adultDat_hf[,13] <- h2o.asfactor(adultDat_hf[,13])
+adultDat_hf[,12] <- h2o.asfactor(adultDat_hf[,12])
+adultDat_hf[,11] <- h2o.asfactor(adultDat_hf[,11])
+adultDat_hf[,10] <- h2o.asfactor(adultDat_hf[,10])
+adultDat_hf[,9] <- h2o.asfactor(adultDat_hf[,9])
+adultDat_hf[,8] <- h2o.asfactor(adultDat_hf[,8])
+adultDat_hf[,7] <- h2o.asfactor(adultDat_hf[,7])
+adultDat_hf[,6] <- h2o.asfactor(adultDat_hf[,6])
+```
+
+## Splitting the data into train, test, and valid
+```{r train and test data}
+splits <- h2o.splitFrame(adultDat_hf, c(0.6, 0.2), seed=1234)
+train  <- h2o.assign(splits[[1]], "train.hex") # 60%
+test   <- h2o.assign(splits[[2]], "test.hex")  # 20%
+valid  <- h2o.assign(splits[[3]], "valid.hex") # 20%
+```
+
+## Defining response variable and predictor variables
+```{r define response and predictors}
+response <- "income"
+predictors <- setdiff(names(adultDat_hf), response)
+response
+predictors
+```
+
+## Training Deep Learning Models
+
+### First we will train a basic DL (deep learning) model with mostly default parameters
+```{r deeplearning model 1}
+adult_dl_model1 <- h2o.deeplearning(x = predictors,
+                            y = response,
+                            training_frame = train,
+                            model_id = "adult_dl_model1",
+                            epochs = 10,
+                            hidden = c(2,2),
+                            seed = 1)
+```
+
+### In the second model, we will increase the number of epochs used in the DNN by setting epochs=50 (the default is 10). Increasing the number of epochs in a deep neural net may increase performance of the model, however, you have to be careful not to overfit your model to your training data. To automatically find the optimal number of epochs, you must use H2O’s early stopping functionality. Unlike the rest of the H2O algorithms, H2O’s DL will use early stopping by default, so for comparison we will first turn off early stopping. We do this in the next example by setting stopping_rounds=0
+```{r deeplearning model 2}
+adult_dl_model2 <- h2o.deeplearning(x = predictors,
+                            y = response,
+                            training_frame = train,
+                            model_id = "adult_dl_model2",
+                            epochs = 50,
+                            hidden = c(2,2),
+                            stopping_rounds = 0,  # disable early stopping
+                            seed = 1)
+```
+
+### Train deep learning neural net with early stopping:This example will use the same model parameters as adult_dl_model2. However, this time, we will turn on early stopping and specify the stopping criterion. We will use cross-validation (nfolds=3 to determine the optimal number of epochs. Alternatively, we could pass validation set to the validation_frame argument (note: the validation set must be different than the test set!).
+```{r deeplearning model 3}
+adult_dl_model3 <- h2o.deeplearning(x = predictors,
+                            y = response,
+                            training_frame = train,
+                            validation_frame= valid,
+                            model_id = "adult_dl_model3",
+                            epochs = 50,
+                            hidden = c(2,2),
+                            nfolds = 3,                            #used for early stopping
+                            score_interval = 1,                    #used for early stopping
+                            stopping_rounds = 5,                   #used for early stopping
+                            stopping_metric = "misclassification", #used for early stopping
+                            stopping_tolerance = 1e-3,             #used for early stopping
+                            seed = 1)
+```
+
+### Let’s compare the performance of the three Deep Learning models against test data.
+```{r performance on test data}
+model1_perf <- h2o.performance(model = adult_dl_model1, newdata = test)
+model2_perf <- h2o.performance(model = adult_dl_model2, newdata = test)
+model3_perf <- h2o.performance(model = adult_dl_model3, newdata = test)
+
+# Retreive test set MSE
+h2o.mse(model1_perf)
+h2o.mse(model2_perf)
+h2o.mse(model3_perf)
+```
+
+### There are a number of utility functions that allow us to inspect the model. For example, h2o.scoreHistory() or h2o.confusionMatrix().
+```{r score History: adult_dl_model3}
+h2o.scoreHistory(adult_dl_model3)
+```
+
+```{r cvonfusion matrix: adult_dl_model3}
+h2o.confusionMatrix(adult_dl_model3)
+```
+
+### We can also “plot a model”, which will graph the performance of some metric over the training process.
+```{r plot: adult_dl_model3}
+# Get the CV models from the `adult_dl_model3` object
+cv_models <- sapply(adult_dl_model3@model$cross_validation_models, 
+                    function(i) h2o.getModel(i$name))
+
+# Plot the scoring history over time
+plot(cv_models[[1]], 
+     timestep = "epochs", 
+     metric = "classification_error")
+```
+
+### Deep Learning Grid Search (h2o.grid())
+#### Random Grid Search is usually a quicker way to find a good model which is an alternative to manual tuning, or “hand tuning”.
+
+#### First define a grid of Deep Learning hyperparamters and specify the search criteria.
+```{r}
+activation_opt <- c("Rectifier", "Maxout", "Tanh")
+l1_opt <- c(0, 0.00001, 0.0001, 0.001, 0.01)
+l2_opt <- c(0, 0.00001, 0.0001, 0.001, 0.01)
+
+hyper_params <- list(activation = activation_opt, l1 = l1_opt, l2 = l2_opt)
+search_criteria <- list(strategy = "RandomDiscrete", max_runtime_secs = 600)
+```
+
+#### Rather than comparing models by using cross-validation (which is “better” but takes longer), we will simply partition our training set into two pieces – one for training and one for validation.
+
+#### This will split the train frame into an 80% and 20% partition of the rows.
+```{r}
+splits1 <- h2o.splitFrame(train, ratios = 0.8, seed = 1)
+```
+
+#### Train the random grid. Fixed non-default parameters such as hidden=c(2,2) can be passed directly to the h2o.grid() function.
+```{r}
+adultDat_grid <- h2o.grid("deeplearning", x = predictors, y = response,
+                    grid_id = "adultDat_grid",
+                    training_frame = splits1[[1]],
+                    validation_frame = splits1[[2]],
+                    seed = 1,
+                    hidden = c(2,2),
+                    hyper_params = hyper_params,
+                    search_criteria = search_criteria)
+```
+
+#### Once we have trained the grid, we can collect the results and sort by our model performance metric of choice.
+```{r}
+adultDat_gridperf <- h2o.getGrid(grid_id = "adultDat_grid", 
+                           sort_by = "accuracy", 
+                           decreasing = TRUE)
+print(adultDat_gridperf)
+```
+
+#### Grab the model_id for the top DL model, chosen by validation error.
+```{r}
+best_dl_model_id <- adultDat_gridperf@model_ids[[1]]
+best_dl <- h2o.getModel(best_dl_model_id)
+```
+
+#### Now let’s evaluate the model performance on a test set so we get an honest estimate of top model performance.
+```{r}
+best_dl_perf <- h2o.performance(model = best_dl, newdata = test)
+h2o.mse(best_dl_perf)
+```
+
